@@ -1,0 +1,374 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Tetris</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      font-family: "Malgun Gothic", Arial, sans-serif;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      display: grid;
+      place-items: center;
+      background: linear-gradient(135deg, #111827, #1f2937);
+      color: #e5e7eb;
+    }
+
+    .panel {
+      width: min(96vw, 980px);
+      display: grid;
+      grid-template-columns: 320px 1fr;
+      gap: 24px;
+      align-items: start;
+      background: rgba(17, 24, 39, 0.92);
+      border: 1px solid rgba(148, 163, 184, 0.2);
+      border-radius: 20px;
+      padding: 24px;
+      box-shadow: 0 18px 40px rgba(0, 0, 0, 0.35);
+    }
+
+    .left {
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+
+    h1 {
+      margin: 0;
+      font-size: 28px;
+      color: #f8fafc;
+    }
+
+    p { margin: 0; color: #cbd5e1; line-height: 1.5; }
+
+    .card {
+      background: rgba(15, 23, 42, 0.95);
+      border: 1px solid rgba(148, 163, 184, 0.18);
+      border-radius: 16px;
+      padding: 14px;
+    }
+
+    .stats {
+      display: grid;
+      gap: 8px;
+      font-size: 15px;
+    }
+
+    .stat-row {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      color: #e5e7eb;
+    }
+
+    .controls {
+      display: grid;
+      gap: 8px;
+      font-size: 14px;
+      color: #dbe4f0;
+    }
+
+    button {
+      border: 0;
+      border-radius: 10px;
+      padding: 10px 12px;
+      font-weight: 700;
+      cursor: pointer;
+      background: linear-gradient(135deg, #38bdf8, #818cf8);
+      color: #0f172a;
+      transition: transform 0.08s ease;
+    }
+
+    button:hover { transform: translateY(-1px); }
+
+    .game-wrap {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 12px;
+    }
+
+    canvas {
+      border-radius: 14px;
+      border: 2px solid rgba(148, 163, 184, 0.2);
+      background: #020617;
+      box-shadow: inset 0 0 0 1px rgba(255,255,255,0.03);
+    }
+
+    .footer-note {
+      font-size: 12px;
+      color: #94a3b8;
+      text-align: center;
+    }
+
+    @media (max-width: 900px) {
+      .panel { grid-template-columns: 1fr; }
+      canvas { width: 100%; height: auto; }
+    }
+  </style>
+</head>
+<body>
+  <div class="panel">
+    <div class="left">
+      <div>
+        <h1>Tetris</h1>
+        <p>방향키로 이동하고, Space로 회전, P로 일시정지하세요.</p>
+      </div>
+
+      <div class="card">
+        <div class="stats">
+          <div class="stat-row"><span>점수</span><strong id="score">0</strong></div>
+          <div class="stat-row"><span>레벨</span><strong id="level">1</strong></div>
+          <div class="stat-row"><span>줄</span><strong id="lines">0</strong></div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="controls">
+          <div>← → : 이동</div>
+          <div>↑ / Space : 회전</div>
+          <div>↓ : 빠르게 내리기</div>
+          <div>P : 일시정지</div>
+          <div>R : 다시 시작</div>
+        </div>
+      </div>
+
+      <button id="restartBtn" type="button">게임 다시 시작</button>
+    </div>
+
+    <div class="game-wrap">
+      <canvas id="board" width="320" height="640"></canvas>
+      <div class="footer-note">브라우저에서 바로 실행할 수 있는 기본 터트리스입니다.</div>
+    </div>
+  </div>
+
+  <script>
+    const canvas = document.getElementById('board');
+    const ctx = canvas.getContext('2d');
+    const scoreEl = document.getElementById('score');
+    const levelEl = document.getElementById('level');
+    const linesEl = document.getElementById('lines');
+    const restartBtn = document.getElementById('restartBtn');
+
+    const COLS = 10;
+    const ROWS = 20;
+    const BLOCK = 32;
+    const EMPTY = 0;
+
+    const SHAPES = {
+      I: { color: '#38bdf8', matrix: [[1,1,1,1]] },
+      O: { color: '#facc15', matrix: [[1,1],[1,1]] },
+      T: { color: '#c084fc', matrix: [[0,1,0],[1,1,1]] },
+      S: { color: '#4ade80', matrix: [[0,1,1],[1,1,0]] },
+      Z: { color: '#f87171', matrix: [[1,1,0],[0,1,1]] },
+      J: { color: '#60a5fa', matrix: [[1,0,0],[1,1,1]] },
+      L: { color: '#fb923c', matrix: [[0,0,1],[1,1,1]] },
+    };
+
+    const PIECES = Object.keys(SHAPES);
+
+    let board = Array.from({ length: ROWS }, () => Array(COLS).fill(EMPTY));
+    let currentPiece = null;
+    let dropCounter = 0;
+    let dropInterval = 700;
+    let lastTime = 0;
+    let paused = false;
+    let score = 0;
+    let level = 1;
+    let lines = 0;
+
+    function randomPiece() {
+      const type = PIECES[Math.floor(Math.random() * PIECES.length)];
+      return {
+        type,
+        x: Math.floor(COLS / 2) - 1,
+        y: 0,
+        matrix: SHAPES[type].matrix.map(row => [...row]),
+        color: SHAPES[type].color,
+      };
+    }
+
+    function createBoard() {
+      board = Array.from({ length: ROWS }, () => Array(COLS).fill(EMPTY));
+      score = 0;
+      level = 1;
+      lines = 0;
+      dropInterval = 700;
+      updateUI();
+      currentPiece = randomPiece();
+      paused = false;
+      draw();
+    }
+
+    function updateUI() {
+      scoreEl.textContent = score;
+      levelEl.textContent = level;
+      linesEl.textContent = lines;
+    }
+
+    function collide(piece, xOffset = 0, yOffset = 0) {
+      for (let y = 0; y < piece.matrix.length; y++) {
+        for (let x = 0; x < piece.matrix[y].length; x++) {
+          if (!piece.matrix[y][x]) continue;
+          const newX = piece.x + x + xOffset;
+          const newY = piece.y + y + yOffset;
+          if (newX < 0 || newX >= COLS || newY >= ROWS) return true;
+          if (newY >= 0 && board[newY][newX]) return true;
+        }
+      }
+      return false;
+    }
+
+    function rotateMatrix(matrix) {
+      return matrix[0].map((_, index) => matrix.map(row => row[index]).reverse());
+    }
+
+    function rotatePiece() {
+      if (!currentPiece) return;
+      const rotated = rotateMatrix(currentPiece.matrix);
+      const original = currentPiece.matrix;
+      currentPiece.matrix = rotated;
+      if (collide(currentPiece)) {
+        currentPiece.matrix = original;
+      }
+    }
+
+    function movePiece(dx) {
+      if (!currentPiece || paused) return;
+      if (!collide(currentPiece, dx, 0)) currentPiece.x += dx;
+    }
+
+    function hardDrop() {
+      if (!currentPiece || paused) return;
+      while (!collide(currentPiece, 0, 1)) currentPiece.y += 1;
+      lockPiece();
+    }
+
+    function lockPiece() {
+      if (!currentPiece) return;
+      for (let y = 0; y < currentPiece.matrix.length; y++) {
+        for (let x = 0; x < currentPiece.matrix[y].length; x++) {
+          if (currentPiece.matrix[y][x]) {
+            const ny = currentPiece.y + y;
+            const nx = currentPiece.x + x;
+            if (ny >= 0) board[ny][nx] = currentPiece.type;
+          }
+        }
+      }
+      clearLines();
+      currentPiece = randomPiece();
+      if (collide(currentPiece)) {
+        alert('게임 오버! 다시 시작하려면 R을 눌러주세요.');
+        paused = true;
+      }
+      draw();
+    }
+
+    function clearLines() {
+      let removed = 0;
+      for (let y = ROWS - 1; y >= 0; y--) {
+        if (board[y].every(cell => cell !== EMPTY)) {
+          board.splice(y, 1);
+          board.unshift(Array(COLS).fill(EMPTY));
+          removed += 1;
+          y += 1;
+        }
+      }
+      if (removed > 0) {
+        const points = [0, 100, 300, 500, 800];
+        score += points[removed] * level;
+        lines += removed;
+        level = Math.floor(lines / 10) + 1;
+        dropInterval = Math.max(120, 700 - (level - 1) * 60);
+        updateUI();
+      }
+    }
+
+    function drawCell(x, y, color) {
+      ctx.fillStyle = color;
+      ctx.fillRect(x * BLOCK, y * BLOCK, BLOCK - 2, BLOCK - 2);
+      ctx.strokeStyle = 'rgba(255,255,255,0.08)';
+      ctx.strokeRect(x * BLOCK, y * BLOCK, BLOCK - 2, BLOCK - 2);
+    }
+
+    function draw() {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      ctx.fillStyle = '#020617';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+      for (let y = 0; y < ROWS; y++) {
+        for (let x = 0; x < COLS; x++) {
+          if (board[y][x]) {
+            drawCell(x, y, SHAPES[board[y][x]].color);
+          }
+        }
+      }
+
+      if (currentPiece) {
+        for (let y = 0; y < currentPiece.matrix.length; y++) {
+          for (let x = 0; x < currentPiece.matrix[y].length; x++) {
+            if (currentPiece.matrix[y][x]) {
+              drawCell(currentPiece.x + x, currentPiece.y + y, currentPiece.color);
+            }
+          }
+        }
+      }
+
+      if (paused) {
+        ctx.fillStyle = 'rgba(15, 23, 42, 0.75)';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        ctx.fillStyle = '#f8fafc';
+        ctx.font = 'bold 22px Malgun Gothic';
+        ctx.textAlign = 'center';
+        ctx.fillText('일시정지', canvas.width / 2, canvas.height / 2 - 8);
+        ctx.font = '14px Malgun Gothic';
+        ctx.fillStyle = '#dbe4f0';
+        ctx.fillText('P를 눌러 계속하기', canvas.width / 2, canvas.height / 2 + 24);
+      }
+    }
+
+    function update(time = 0) {
+      const delta = time - lastTime;
+      lastTime = time;
+      if (!paused) {
+        dropCounter += delta;
+        if (dropCounter > dropInterval) {
+          if (!collide(currentPiece, 0, 1)) currentPiece.y += 1;
+          else lockPiece();
+          dropCounter = 0;
+        }
+      }
+      draw();
+      requestAnimationFrame(update);
+    }
+
+    document.addEventListener('keydown', (e) => {
+      const key = e.key.toLowerCase();
+      if (key === 'arrowleft') { e.preventDefault(); movePiece(-1); return; }
+      if (key === 'arrowright') { e.preventDefault(); movePiece(1); return; }
+      if (key === 'arrowdown') {
+        e.preventDefault();
+        if (!currentPiece) return;
+        if (!collide(currentPiece, 0, 1)) currentPiece.y += 1;
+        return;
+      }
+      if (key === 'arrowup' || key === ' ') { e.preventDefault(); rotatePiece(); return; }
+      if (key === 'p') { e.preventDefault(); paused = !paused; draw(); return; }
+      if (key === 'r') { e.preventDefault(); createBoard(); return; }
+      if (key === 'enter') { e.preventDefault(); if (paused) paused = false; }
+    });
+
+    restartBtn.addEventListener('click', createBoard);
+
+    createBoard();
+    requestAnimationFrame(update);
+  </script>
+</body>
+</html>
