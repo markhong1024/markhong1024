@@ -1,0 +1,607 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>자아판기 홍보영상</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;500;700;900&family=Noto+Serif+KR:wght@600;900&display=block" rel="stylesheet">
+<style>
+  html, body { margin: 0; background: #120b08; height: 100%; }
+  body { display: flex; align-items: center; justify-content: center; }
+  canvas { height: 100vh; max-width: 100vw; aspect-ratio: 9 / 16; display: block; }
+  body.render canvas { height: auto; max-width: none; }
+</style>
+</head>
+<body>
+<canvas id="c" width="1080" height="1920"></canvas>
+<script>
+// ============================================================
+//  자아판기(自我販機) 30초 모션그래픽 홍보영상
+//  renderFrame(t) : t초 시점 프레임을 그린다 (결정적 렌더링)
+// ============================================================
+const W = 1080, H = 1920, DURATION = 30;
+const cv = document.getElementById('c');
+const ctx = cv.getContext('2d');
+
+const C = {
+  dark: '#1E1410', darker: '#120B08', brown: '#3B2A20', machine: '#5A3426',
+  machineDark: '#3A2219', trim: '#C8894B', cream: '#F4EBDD', latte: '#D9B48F',
+  esp: '#4A2A18', milk: '#FBF6EE', glow: '#FFD9A0', caramel: '#B5703A',
+};
+const SANS = '"Noto Sans KR", "WenQuanYi Zen Hei", sans-serif';
+const SERIF = '"Noto Serif KR", "WenQuanYi Zen Hei", serif';
+
+// ---------- 유틸 ----------
+const clamp = (v, a = 0, b = 1) => Math.min(b, Math.max(a, v));
+const prog = (t, a, b) => clamp((t - a) / (b - a));
+const lerp = (a, b, p) => a + (b - a) * p;
+const eio = p => p < .5 ? 4 * p * p * p : 1 - Math.pow(-2 * p + 2, 3) / 2;
+const eout = p => 1 - Math.pow(1 - p, 3);
+const eback = p => { const c1 = 1.70158, c3 = c1 + 1; return 1 + c3 * Math.pow(p - 1, 3) + c1 * Math.pow(p - 1, 2); };
+const ebounce = p => {
+  const n = 7.5625, d = 2.75;
+  if (p < 1 / d) return n * p * p;
+  if (p < 2 / d) return n * (p -= 1.5 / d) * p + .75;
+  if (p < 2.5 / d) return n * (p -= 2.25 / d) * p + .9375;
+  return n * (p -= 2.625 / d) * p + .984375;
+};
+function hex(c) { const n = parseInt(c.slice(1), 16); return [n >> 16, (n >> 8) & 255, n & 255]; }
+function mix(a, b, p) { const x = hex(a), y = hex(b); return `rgb(${x.map((v, i) => Math.round(lerp(v, y[i], p))).join(',')})`; }
+
+function rr(x, y, w, h, r) {
+  ctx.beginPath(); ctx.moveTo(x + r, y);
+  ctx.arcTo(x + w, y, x + w, y + h, r); ctx.arcTo(x + w, y + h, x, y + h, r);
+  ctx.arcTo(x, y + h, x, y, r); ctx.arcTo(x, y, x + w, y, r); ctx.closePath();
+}
+function text(str, x, y, o = {}) {
+  ctx.save();
+  ctx.globalAlpha *= (o.alpha ?? 1);
+  ctx.font = `${o.weight || 700} ${o.size || 48}px ${o.family || SANS}`;
+  ctx.fillStyle = o.color || C.cream;
+  ctx.textAlign = o.align || 'center';
+  ctx.textBaseline = 'alphabetic';
+  if (o.spacing) ctx.letterSpacing = o.spacing + 'px';
+  if (o.glow) { ctx.shadowColor = o.glow; ctx.shadowBlur = o.glowBlur || 30; }
+  ctx.fillText(str, x, y);
+  ctx.restore();
+}
+// 아래에서 떠오르며 등장하는 텍스트
+function riseText(str, x, y, t, start, o = {}) {
+  const p = eout(prog(t, start, start + (o.dur || .6)));
+  if (p <= 0) return;
+  let a = p;
+  if (o.out != null) a *= 1 - prog(t, o.out, o.out + .35);
+  text(str, x, y + (1 - p) * 40, { ...o, alpha: a * (o.alpha ?? 1) });
+}
+function caption(str, t, start, end) {
+  const pin = eout(prog(t, start, start + .5)), pout = prog(t, end - .3, end);
+  const a = pin * (1 - pout); if (a <= 0) return;
+  ctx.save(); ctx.globalAlpha = a;
+  ctx.font = `700 50px ${SANS}`;
+  const w = ctx.measureText(str).width + 90;
+  const y = 1640 + (1 - pin) * 30;
+  rr(540 - w / 2, y - 62, w, 96, 48); ctx.fillStyle = 'rgba(18,11,8,.72)'; ctx.fill();
+  ctx.strokeStyle = 'rgba(200,137,75,.6)'; ctx.lineWidth = 2; ctx.stroke();
+  ctx.restore();
+  text(str, 540, y + 2, { size: 50, alpha: a, color: C.cream });
+}
+// 결정적 의사난수
+function rand(i) { const x = Math.sin(i * 127.1 + 311.7) * 43758.5453; return x - Math.floor(x); }
+
+// ---------- 소품: 유리컵(측면) ----------
+function glassCup(cx, bottom, w, h, esp, milk) {
+  const tw = w, bw = w * .78;
+  const level = clamp(esp * .32 + milk * .6, 0, .92);
+  const ratio = milk > 0 ? clamp(milk / (milk + esp * .5)) : 0;
+  // 액체
+  if (level > 0) {
+    const lh = h * level, topW = lerp(bw, tw, level);
+    ctx.save();
+    ctx.beginPath();
+    ctx.moveTo(cx - bw / 2 + 6, bottom - 6); ctx.lineTo(cx + bw / 2 - 6, bottom - 6);
+    ctx.lineTo(cx + topW / 2 - 6, bottom - lh); ctx.lineTo(cx - topW / 2 + 6, bottom - lh); ctx.closePath();
+    const g = ctx.createLinearGradient(0, bottom - lh, 0, bottom);
+    g.addColorStop(0, mix(C.esp, C.milk, ratio * .9));
+    g.addColorStop(.25, mix(C.esp, C.latte, ratio));
+    g.addColorStop(1, mix(C.esp, C.caramel, ratio * .7));
+    ctx.fillStyle = g; ctx.fill();
+    // 거품층
+    if (milk > .5) {
+      const fh = Math.min(lh * .22, h * .12) * prog(milk, .5, 1);
+      ctx.beginPath();
+      ctx.moveTo(cx - topW / 2 + 6, bottom - lh); ctx.lineTo(cx + topW / 2 - 6, bottom - lh);
+      ctx.lineTo(cx + lerp(bw, tw, level - fh / h) / 2 - 6, bottom - lh + fh);
+      ctx.lineTo(cx - lerp(bw, tw, level - fh / h) / 2 + 6, bottom - lh + fh); ctx.closePath();
+      ctx.fillStyle = 'rgba(251,246,238,.9)'; ctx.fill();
+    }
+    ctx.restore();
+  }
+  // 유리
+  ctx.save();
+  ctx.beginPath();
+  ctx.moveTo(cx - tw / 2, bottom - h); ctx.lineTo(cx - bw / 2, bottom);
+  ctx.lineTo(cx + bw / 2, bottom); ctx.lineTo(cx + tw / 2, bottom - h);
+  ctx.strokeStyle = 'rgba(255,240,220,.85)'; ctx.lineWidth = 5; ctx.lineJoin = 'round'; ctx.stroke();
+  ctx.fillStyle = 'rgba(255,240,220,.07)'; ctx.fill();
+  ctx.beginPath(); ctx.moveTo(cx - tw / 2 + 18, bottom - h + 20); ctx.lineTo(cx - bw / 2 + 16, bottom - 20);
+  ctx.strokeStyle = 'rgba(255,255,255,.35)'; ctx.lineWidth = 6; ctx.lineCap = 'round'; ctx.stroke();
+  ctx.restore();
+  return bottom - h * level;
+}
+
+// ---------- 소품: 테이크아웃 컵 ----------
+function takeoutCup(cx, bottom, s, o = {}) {
+  const h = 420 * s, tw = 270 * s, bw = 205 * s;
+  ctx.save();
+  // 그림자
+  ctx.beginPath(); ctx.ellipse(cx, bottom + 8 * s, bw * .7, 16 * s, 0, 0, Math.PI * 2);
+  ctx.fillStyle = 'rgba(40,20,10,.18)'; ctx.fill();
+  // 몸통
+  ctx.beginPath();
+  ctx.moveTo(cx - tw / 2, bottom - h); ctx.lineTo(cx - bw / 2, bottom);
+  ctx.lineTo(cx + bw / 2, bottom); ctx.lineTo(cx + tw / 2, bottom - h); ctx.closePath();
+  const g = ctx.createLinearGradient(cx - tw / 2, 0, cx + tw / 2, 0);
+  g.addColorStop(0, '#E9DDCB'); g.addColorStop(.35, '#FFFAF2'); g.addColorStop(1, '#D8C8B0');
+  ctx.fillStyle = g; ctx.fill();
+  // 슬리브
+  const s1 = bottom - h * .72, s2 = bottom - h * .28;
+  const wAt = y => lerp(bw, tw, (bottom - y) / h);
+  ctx.beginPath();
+  ctx.moveTo(cx - wAt(s1) / 2 - 3 * s, s1); ctx.lineTo(cx + wAt(s1) / 2 + 3 * s, s1);
+  ctx.lineTo(cx + wAt(s2) / 2 + 3 * s, s2); ctx.lineTo(cx - wAt(s2) / 2 - 3 * s, s2); ctx.closePath();
+  ctx.fillStyle = o.sleeve || C.caramel; ctx.fill();
+  // 뚜껑
+  rr(cx - tw / 2 - 14 * s, bottom - h - 34 * s, tw + 28 * s, 38 * s, 12 * s); ctx.fillStyle = o.lid || C.brown; ctx.fill();
+  rr(cx - tw / 2 + 10 * s, bottom - h - 62 * s, tw - 20 * s, 32 * s, 14 * s); ctx.fill();
+  ctx.restore();
+  // 슬리브 문구
+  const label = o.label || '자아판기';
+  const mid = (s1 + s2) / 2;
+  if (o.sub) {
+    text(o.sub, cx, mid - 22 * s, { size: 22 * s, weight: 500, color: 'rgba(255,245,230,.85)' });
+    text(label, cx, mid + 26 * s, { size: (o.labelSize || 40) * s, weight: 900, color: C.cream });
+  } else {
+    text(label, cx, mid + 16 * s, { size: (o.labelSize || 46) * s, weight: 900, color: C.cream });
+  }
+}
+
+function steam(cx, top, t, s = 1, alpha = 1) {
+  ctx.save(); ctx.lineCap = 'round';
+  for (let i = 0; i < 3; i++) {
+    const ph = t * 1.4 + i * 2.1;
+    const a = (.35 + .25 * Math.sin(ph)) * alpha;
+    ctx.strokeStyle = `rgba(150,110,80,${a})`; ctx.lineWidth = 9 * s;
+    ctx.beginPath();
+    const x0 = cx + (i - 1) * 55 * s;
+    for (let k = 0; k <= 20; k++) {
+      const y = top - k * 9 * s;
+      const x = x0 + Math.sin(k * .45 + ph) * 14 * s;
+      k ? ctx.lineTo(x, y) : ctx.moveTo(x, y);
+    }
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+
+// ---------- 자판기 본체 (머신 좌표 620×1140) ----------
+const BTN = ['지친 나', '설레는 나', '쉬고픈 나', '그냥 나'];
+const SHELF = [['월요일의 나', '꿈꾸는 나', '웃는 나'], ['지친 나', '설레는 나', '쉬고픈 나'], ['용감한 나', '조용한 나', '그냥 나']];
+
+function machine(st) {
+  const L = st.light;
+  // 몸체
+  rr(0, 0, 620, 1120, 40); ctx.fillStyle = C.machine; ctx.fill();
+  const sg = ctx.createLinearGradient(0, 0, 620, 0);
+  sg.addColorStop(0, 'rgba(255,220,180,.10)'); sg.addColorStop(.5, 'rgba(0,0,0,0)'); sg.addColorStop(1, 'rgba(0,0,0,.25)');
+  ctx.fillStyle = sg; ctx.fill();
+  rr(0, 0, 620, 1120, 40); ctx.strokeStyle = C.trim; ctx.lineWidth = 6; ctx.stroke();
+  // 다리
+  ctx.fillStyle = C.machineDark; rr(50, 1110, 100, 34, 8); ctx.fill(); rr(470, 1110, 100, 34, 8); ctx.fill();
+
+  // 간판
+  rr(30, 30, 560, 112, 26); ctx.fillStyle = '#2A1812'; ctx.fill();
+  text('자아판기', 310, 108, { size: 66, weight: 900, color: mix('#6B4A38', C.glow, L), glow: L > .2 ? C.glow : null, glowBlur: 30 * L });
+  text('自我販機', 538, 126, { size: 18, weight: 600, family: SERIF, color: mix('#5A3A2A', C.trim, L), align: 'right' });
+
+  // 진열창
+  rr(40, 170, 380, 540, 20); ctx.fillStyle = '#24160F'; ctx.fill();
+  ctx.save(); rr(40, 170, 380, 540, 20); ctx.clip();
+  const wg = ctx.createLinearGradient(0, 170, 0, 710);
+  wg.addColorStop(0, `rgba(255,214,160,${.45 * L})`); wg.addColorStop(1, `rgba(255,190,120,${.18 * L})`);
+  ctx.fillStyle = wg; ctx.fillRect(40, 170, 380, 540);
+  for (let r = 0; r < 3; r++) {
+    const sy = 335 + r * 170;
+    ctx.fillStyle = `rgba(200,137,75,${.4 + .5 * L})`; ctx.fillRect(40, sy, 380, 8);
+    for (let c = 0; c < 3; c++) {
+      const cx = 103 + c * 127;
+      // 작은 컵
+      ctx.beginPath(); ctx.moveTo(cx - 30, sy - 105); ctx.lineTo(cx - 23, sy); ctx.lineTo(cx + 23, sy); ctx.lineTo(cx + 30, sy - 105); ctx.closePath();
+      ctx.fillStyle = mix('#4A3428', '#FFF6EA', L * .9); ctx.fill();
+      ctx.fillStyle = mix('#3A2219', [C.caramel, C.trim, '#8C5A3C'][(r + c) % 3], L);
+      ctx.fillRect(cx - 28, sy - 75, 56, 40);
+      rr(cx - 36, sy - 118, 72, 16, 6); ctx.fillStyle = mix('#2A1812', C.brown, L); ctx.fill();
+      // 이름표
+      text(SHELF[r][c], cx, sy + 30, { size: 17, weight: 700, color: mix('#6B4A38', C.cream, L) });
+    }
+  }
+  // 반사광
+  ctx.beginPath(); ctx.moveTo(60, 710); ctx.lineTo(260, 170); ctx.lineTo(320, 170); ctx.lineTo(120, 710); ctx.closePath();
+  ctx.fillStyle = 'rgba(255,255,255,.06)'; ctx.fill();
+  ctx.restore();
+  rr(40, 170, 380, 540, 20); ctx.strokeStyle = '#2A1812'; ctx.lineWidth = 8; ctx.stroke();
+
+  // 조작부
+  rr(440, 170, 140, 540, 16); ctx.fillStyle = C.machineDark; ctx.fill();
+  rr(470, 196, 80, 96, 12); ctx.fillStyle = '#2A1812'; ctx.fill();
+  rr(504, 212, 12, 64, 6); ctx.fillStyle = '#0E0806'; ctx.fill();
+  if (st.coinGlow) { rr(504, 212, 12, 64, 6); ctx.fillStyle = `rgba(255,217,160,${st.coinGlow})`; ctx.fill(); }
+  text('여유 투입구', 510, 318, { size: 18, weight: 700, color: mix('#6B4A38', C.trim, L) });
+  // 디스플레이
+  rr(456, 336, 108, 54, 10); ctx.fillStyle = '#140D09'; ctx.fill();
+  const disp = st.display || 'SELECT';
+  text(disp, 510, 372, { size: disp.length > 6 ? 18 : 22, weight: 900, color: mix('#3A2A20', '#FFC977', L), glow: L > .5 ? '#FFB347' : null, glowBlur: 12 });
+  // 버튼
+  for (let i = 0; i < 4; i++) {
+    const y = 412 + i * 72;
+    const lit = st.lit === i, pressed = st.pressed === i;
+    const pz = pressed ? st.press || 0 : 0;
+    ctx.save(); ctx.translate(510, y + 29); ctx.scale(1 - .08 * pz, 1 - .08 * pz); ctx.translate(-510, -(y + 29));
+    rr(458, y, 104, 58, 12);
+    ctx.fillStyle = pressed ? mix('#6B4434', C.glow, clamp(pz + .6)) : lit ? C.glow : mix('#4A2E22', '#7A4E3A', L);
+    if (lit || pressed) { ctx.shadowColor = C.glow; ctx.shadowBlur = 25; }
+    ctx.fill(); ctx.shadowBlur = 0;
+    text(BTN[i], 510, y + 37, { size: 20, weight: 900, color: (lit || pressed) ? C.brown : mix('#7A5A48', C.cream, L) });
+    ctx.restore();
+  }
+  // 배출구
+  text('꺼내 마시는 곳', 310, 744, { size: 24, weight: 700, color: mix('#6B4A38', C.trim, L) });
+  rr(60, 762, 500, 300, 26); ctx.fillStyle = '#120B08'; ctx.fill();
+  ctx.save(); rr(60, 762, 500, 300, 26); ctx.clip();
+  if (st.slotGlow) {
+    const rg = ctx.createRadialGradient(310, 800, 10, 310, 900, 320);
+    rg.addColorStop(0, `rgba(255,200,130,${.55 * st.slotGlow})`); rg.addColorStop(1, 'rgba(255,200,130,0)');
+    ctx.fillStyle = rg; ctx.fillRect(60, 762, 500, 300);
+  }
+  // 노즐
+  rr(285, 762, 50, 34, 8); ctx.fillStyle = '#3A2A20'; ctx.fill();
+  if (st.cup) {
+    const c = st.cup;
+    const bottom = 1040 - (1 - c.drop) * 320;
+    const surf = glassCup(310, bottom, 170, 210, c.esp, c.milk);
+    if (c.stream) {
+      ctx.fillStyle = c.stream === 'esp' ? C.esp : C.milk;
+      const sw = c.stream === 'esp' ? 12 : 18;
+      const wob = Math.sin(c.t * 40) * 1.5;
+      rr(310 - sw / 2 + wob, 796, sw, surf - 796, sw / 2); ctx.fill();
+    }
+    if (c.steam) steam(310, bottom - 225, c.t, .6, c.steam);
+  }
+  ctx.restore();
+  rr(60, 762, 500, 300, 26); ctx.strokeStyle = '#2A1812'; ctx.lineWidth = 8; ctx.stroke();
+}
+
+// ---------- 카메라 ----------
+const CAM = [
+  { t: 0,    f: [310, 580], s: 1.12, a: [540, 1080] },
+  { t: 3.3,  f: [310, 580], s: 1.2,  a: [540, 1080] },
+  { t: 4.3,  f: [500, 400], s: 2.45, a: [540, 900] },
+  { t: 7.6,  f: [505, 410], s: 2.6,  a: [540, 900] },
+  { t: 8.5,  f: [310, 910], s: 1.9,  a: [540, 900] },
+  { t: 12.4, f: [310, 920], s: 2.15, a: [540, 900] },
+];
+function camera(t) {
+  let i = 0; while (i < CAM.length - 1 && t > CAM[i + 1].t) i++;
+  const A = CAM[i], B = CAM[Math.min(i + 1, CAM.length - 1)];
+  const p = A === B ? 0 : eio(prog(t, A.t, B.t));
+  return { fx: lerp(A.f[0], B.f[0], p), fy: lerp(A.f[1], B.f[1], p), s: lerp(A.s, B.s, p), ax: lerp(A.a[0], B.a[0], p), ay: lerp(A.a[1], B.a[1], p) };
+}
+
+// ---------- 배경 ----------
+function bgDark(light = 1) {
+  ctx.fillStyle = C.darker; ctx.fillRect(0, 0, W, H);
+  const g = ctx.createRadialGradient(540, 1000, 50, 540, 1000, 1100);
+  g.addColorStop(0, mix('#1A100C', '#4A2E20', light)); g.addColorStop(1, C.darker);
+  ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+}
+function bgCream(col = C.cream) {
+  ctx.fillStyle = col; ctx.fillRect(0, 0, W, H);
+  const g = ctx.createRadialGradient(540, 900, 100, 540, 900, 1300);
+  g.addColorStop(0, 'rgba(255,255,255,.35)'); g.addColorStop(1, 'rgba(120,70,30,.10)');
+  ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+}
+function grain(t) {
+  ctx.save(); ctx.globalAlpha = .045;
+  const f = Math.floor(t * 30);
+  for (let i = 0; i < 260; i++) {
+    const x = rand(i + f * 977) * W, y = rand(i * 3.3 + f * 31) * H;
+    ctx.fillStyle = rand(i + f) > .5 ? '#fff' : '#000'; ctx.fillRect(x, y, 3, 3);
+  }
+  ctx.restore();
+}
+
+// ============================================================
+//  SCENE 1~3 : 자판기 (0 ~ 12.6s)
+// ============================================================
+function sceneMachine(t) {
+  // 조명 점등(깜빡임)
+  let L = 0;
+  if (t > .35) L = .55; if (t > .45) L = .1; if (t > .6) L = .8; if (t > .68) L = .3; if (t > .85) L = 1;
+  bgDark(L);
+  const cam = camera(t);
+  const st = { light: L };
+
+  // SCENE 2 : 여유 투입 → 버튼 선택
+  const coinP = prog(t, 4.55, 5.25);
+  if (t > 5.2) { st.display = '₩ 여유'; st.coinGlow = (1 - prog(t, 5.2, 5.9)) * .9; }
+  if (t > 5.45 && t < 6.75) st.lit = Math.floor((t - 5.45) / .3) % 4;
+  if (t >= 6.75) { st.pressed = 2; st.press = Math.sin(prog(t, 6.75, 7.05) * Math.PI); st.display = '쉬고픈 나'; }
+  if (t >= 7.05) st.press = 0;
+
+  // SCENE 3 : 한 잔이 내려옴
+  if (t > 8.1) st.slotGlow = prog(t, 8.1, 8.6);
+  if (t > 8.35) {
+    const esp = prog(t, 9.1, 10.3), milk = prog(t, 10.4, 11.7);
+    st.cup = {
+      drop: ebounce(prog(t, 8.35, 8.95)), esp, milk, t,
+      stream: (t > 9.1 && t < 10.3) ? 'esp' : (t > 10.4 && t < 11.7) ? 'milk' : null,
+      steam: prog(t, 11.6, 12.2),
+    };
+  }
+
+  ctx.save();
+  ctx.translate(cam.ax, cam.ay); ctx.scale(cam.s, cam.s); ctx.translate(-cam.fx, -cam.fy);
+  machine(st);
+  // 동전(여유) 낙하
+  if (coinP > 0 && coinP < 1) {
+    const cy = lerp(60, 244, eio(coinP));
+    const squash = coinP > .7 ? lerp(1, .15, prog(coinP, .7, 1)) : 1;
+    ctx.save(); ctx.translate(510, cy); ctx.scale(squash, 1);
+    ctx.beginPath(); ctx.arc(0, 0, 34, 0, Math.PI * 2);
+    ctx.fillStyle = '#E8B866'; ctx.shadowColor = C.glow; ctx.shadowBlur = 25; ctx.fill();
+    ctx.shadowBlur = 0; ctx.lineWidth = 4; ctx.strokeStyle = '#B5803A'; ctx.stroke();
+    text('여유', 0, 9, { size: 22, weight: 900, color: '#6B3E1E' });
+    ctx.restore();
+  }
+  ctx.restore();
+
+  // 텍스트
+  const o1 = 3.2;
+  riseText('오늘의 나,', 540, 250, t, 1.0, { size: 92, weight: 900, out: o1 });
+  riseText('고르셨나요?', 540, 365, t, 1.5, { size: 92, weight: 900, color: C.glow, out: o1 });
+  caption('동전 대신, 잠깐의 여유를 넣고', t, 4.4, 6.0);
+  caption('오늘의 나를 고르면', t, 6.1, 8.0);
+  caption('나만의 한 잔이 내려옵니다', t, 8.6, 12.3);
+}
+
+// ============================================================
+//  SCENE 3b : 라떼아트 (12.2 ~ 14.4s)
+// ============================================================
+function heartPath(cx, cy, s) {
+  ctx.beginPath();
+  ctx.moveTo(cx, cy + 70 * s);
+  ctx.bezierCurveTo(cx - 120 * s, cy - 10 * s, cx - 70 * s, cy - 95 * s, cx, cy - 45 * s);
+  ctx.bezierCurveTo(cx + 70 * s, cy - 95 * s, cx + 120 * s, cy - 10 * s, cx, cy + 70 * s);
+  ctx.closePath();
+}
+function sceneArt(t) {
+  bgCream('#EADBC6');
+  const cx = 540, cy = 900;
+  const zin = eout(prog(t, 12.2, 12.9));
+  const R = 330 * lerp(.85, 1, zin);
+  ctx.save(); ctx.translate(cx, cy); ctx.rotate(lerp(-.25, 0, zin)); ctx.translate(-cx, -cy);
+  // 받침
+  ctx.beginPath(); ctx.arc(cx + 14, cy + 22, R * 1.32, 0, Math.PI * 2); ctx.fillStyle = 'rgba(90,52,38,.18)'; ctx.fill();
+  ctx.beginPath(); ctx.arc(cx, cy, R * 1.32, 0, Math.PI * 2); ctx.fillStyle = '#FFFBF4'; ctx.fill();
+  ctx.beginPath(); ctx.arc(cx, cy, R * 1.12, 0, Math.PI * 2); ctx.strokeStyle = 'rgba(200,137,75,.25)'; ctx.lineWidth = 4; ctx.stroke();
+  // 손잡이
+  rr(cx + R * .95, cy - 34, R * .42, 68, 34); ctx.fillStyle = '#FFFBF4'; ctx.fill();
+  ctx.strokeStyle = 'rgba(160,110,70,.25)'; ctx.lineWidth = 3; ctx.stroke();
+  // 컵
+  ctx.beginPath(); ctx.arc(cx, cy, R, 0, Math.PI * 2); ctx.fillStyle = '#FFFFFF'; ctx.fill();
+  ctx.strokeStyle = 'rgba(160,110,70,.25)'; ctx.stroke();
+  // 커피 표면
+  ctx.save(); ctx.beginPath(); ctx.arc(cx, cy, R * .86, 0, Math.PI * 2); ctx.clip();
+  const cg = ctx.createRadialGradient(cx, cy, 10, cx, cy, R * .86);
+  cg.addColorStop(0, '#B07445'); cg.addColorStop(.7, '#8A5530'); cg.addColorStop(1, '#5E3418');
+  ctx.fillStyle = cg; ctx.fillRect(cx - R, cy - R, R * 2, R * 2);
+  // 우유 퍼짐 → 하트
+  const bloom = eout(prog(t, 12.6, 13.4));
+  const hs = eback(prog(t, 13.2, 13.9));
+  if (bloom > 0) {
+    ctx.beginPath(); ctx.ellipse(cx, cy - 10, 150 * bloom, 125 * bloom, 0, 0, Math.PI * 2);
+    ctx.fillStyle = `rgba(251,246,238,${.95 * (1 - hs * .9)})`; ctx.fill();
+  }
+  if (hs > 0) {
+    for (let k = 3; k >= 0; k--) {
+      heartPath(cx, cy - 5, hs * (1.55 - k * .18));
+      ctx.fillStyle = k % 2 ? '#F0DCC0' : C.milk; ctx.fill();
+    }
+    // 끌어내린 꼬리
+    const tail = prog(t, 13.5, 13.9);
+    ctx.strokeStyle = C.milk; ctx.lineWidth = 10; ctx.lineCap = 'round';
+    ctx.beginPath(); ctx.moveTo(cx, cy - 110); ctx.lineTo(cx, cy - 110 + 230 * tail); ctx.stroke();
+  }
+  ctx.restore();
+  ctx.restore();
+  riseText('오늘의 나에게', 540, 300, t, 12.5, { size: 80, weight: 900, color: C.brown });
+  riseText('꼭 맞는 한 잔', 540, 410, t, 12.9, { size: 80, weight: 900, color: C.caramel });
+}
+
+// ============================================================
+//  SCENE 4 : 시그니처 (14.2 ~ 19.3s)
+// ============================================================
+function sceneSignature(t) {
+  bgCream();
+  // 장식 원
+  ctx.beginPath(); ctx.arc(540, 1130, 380 * eout(prog(t, 14.2, 15)), 0, Math.PI * 2);
+  ctx.fillStyle = 'rgba(200,137,75,.18)'; ctx.fill();
+  const up = eback(prog(t, 14.3, 15.1));
+  const bottom = lerp(2400, 1440, up) + Math.sin(t * 2) * 6;
+  takeoutCup(540, bottom, 1.45, { labelSize: 52, sub: 'SIGNATURE' });
+  steam(540, bottom - 420 * 1.45 - 100, t, 1, prog(t, 15.0, 15.6));
+
+  // 상단 타이틀
+  const pp = eout(prog(t, 14.7, 15.2));
+  if (pp > 0) {
+    ctx.save(); ctx.globalAlpha = pp;
+    rr(540 - 140, 196, 280, 64, 32); ctx.fillStyle = C.brown; ctx.fill();
+    ctx.restore();
+    text('SIGNATURE', 540, 240, { size: 30, weight: 900, color: C.glow, spacing: 6, alpha: pp });
+  }
+  riseText('자아판기 카페라떼', 540, 380, t, 15.0, { size: 96, weight: 900, color: C.brown });
+  riseText('부드러운 우유 위에, 오늘의 나를 담다', 540, 465, t, 15.6, { size: 42, weight: 500, color: '#6B4A38' });
+  // 특징 칩
+  const chips = ['진한 에스프레소', '부드러운 우유', '오늘의 나'];
+  ctx.font = `700 36px ${SANS}`;
+  const ws = chips.map(c => ctx.measureText(c).width + 56), gap = 20;
+  let x = 540 - (ws.reduce((a, b) => a + b) + gap * 2) / 2;
+  chips.forEach((c, i) => {
+    const p = eback(prog(t, 16.3 + i * .25, 16.8 + i * .25));
+    if (p > 0) {
+      ctx.save(); ctx.globalAlpha = clamp(p);
+      ctx.translate(x + ws[i] / 2, 1660); ctx.scale(p, p);
+      rr(-ws[i] / 2, -40, ws[i], 76, 38); ctx.fillStyle = i === 2 ? C.caramel : '#FFFFFF'; ctx.fill();
+      ctx.strokeStyle = 'rgba(181,112,58,.5)'; ctx.lineWidth = 2; ctx.stroke();
+      text(c, 0, 12, { size: 36, weight: 700, color: i === 2 ? C.cream : C.brown });
+      ctx.restore();
+    }
+    x += ws[i] + gap;
+  });
+}
+
+// ============================================================
+//  SCENE 5 : 어떤 나라도 (19.0 ~ 24.2s)
+// ============================================================
+function sceneSelves(t) {
+  bgCream('#E8D5BC');
+  riseText('어떤 나라도,', 540, 300, t, 19.3, { size: 92, weight: 900, color: C.brown });
+  riseText('꺼내 마셔도 괜찮아요', 540, 415, t, 19.8, { size: 72, weight: 900, color: C.caramel });
+  const cups = [
+    { label: '월요일의 나', sleeve: '#8C5A3C', lid: '#3B2A20' },
+    { label: '퇴근한 나', sleeve: C.caramel, lid: '#4A2E22' },
+    { label: '혼자인 나', sleeve: '#A0643A', lid: '#2E1F18' },
+    { label: '함께인 나', sleeve: '#C8894B', lid: '#3B2A20' },
+  ];
+  cups.forEach((c, i) => {
+    const col = i % 2, row = Math.floor(i / 2);
+    const cx = 300 + col * 480, base = 1020 + row * 610;
+    const p = eback(prog(t, 20.2 + i * .28, 20.8 + i * .28));
+    if (p <= 0) return;
+    ctx.save(); ctx.globalAlpha = clamp(p * 1.5);
+    const bob = Math.sin(t * 2.2 + i * 1.3) * 8;
+    ctx.translate(cx, base + bob); ctx.scale(p, p); ctx.rotate(Math.sin(t * 1.5 + i) * .03);
+    takeoutCup(0, 0, .95, { label: c.label, labelSize: 40, sleeve: c.sleeve, lid: c.lid });
+    ctx.restore();
+  });
+}
+
+// ============================================================
+//  SCENE 6 : 이름의 의미 (24.0 ~ 28.2s)
+// ============================================================
+function sceneName(t) {
+  bgDark(.9);
+  // 1단계: 自我 + 自販機
+  const split = 1 - eio(prog(t, 25.8, 26.3));
+  if (split > 0) {
+    ctx.save(); ctx.globalAlpha = split;
+    riseText('自我', 270, 880, t, 24.2, { size: 170, weight: 900, family: SERIF, color: C.cream });
+    riseText('자아 · 나 자신', 270, 970, t, 24.45, { size: 40, weight: 700, color: C.trim });
+    riseText('+', 525, 860, t, 24.7, { size: 110, weight: 400, color: C.trim });
+    riseText('自販機', 790, 880, t, 24.9, { size: 130, weight: 900, family: SERIF, color: C.cream });
+    riseText('자판기', 790, 970, t, 25.15, { size: 40, weight: 700, color: C.trim });
+    ctx.restore();
+  }
+  // 2단계: 自我販機 → 자아판기
+  const m = eout(prog(t, 26.0, 26.6));
+  if (m > 0) {
+    ctx.save(); ctx.globalAlpha = m;
+    const sc = lerp(1.25, 1, m);
+    ctx.translate(540, 940); ctx.scale(sc, sc); ctx.translate(-540, -940);
+    text('自我販機', 540, 980, { size: 190, weight: 900, family: SERIF, color: C.glow, glow: '#FFB347', glowBlur: 40 * m });
+    ctx.restore();
+  }
+  riseText('자아판기', 540, 1240, t, 26.5, { size: 130, weight: 900, color: C.cream });
+  riseText('나를 꺼내 마시는 자판기', 540, 1350, t, 26.9, { size: 50, weight: 500, color: C.trim });
+  // 장식 선
+  const lp = eio(prog(t, 26.5, 27.2));
+  ctx.strokeStyle = 'rgba(200,137,75,.6)'; ctx.lineWidth = 3;
+  ctx.beginPath(); ctx.moveTo(540 - 300 * lp, 1090); ctx.lineTo(540 + 300 * lp, 1090); ctx.stroke();
+}
+
+// ============================================================
+//  SCENE 7 : 엔드카드 (27.8 ~ 30s)
+// ============================================================
+function miniMachine(cx, cy, s) {
+  ctx.save(); ctx.translate(cx, cy); ctx.scale(s, s);
+  rr(-90, -130, 180, 260, 22); ctx.fillStyle = C.machine; ctx.fill();
+  ctx.strokeStyle = C.trim; ctx.lineWidth = 5; ctx.stroke();
+  rr(-72, -112, 144, 34, 10); ctx.fillStyle = '#2A1812'; ctx.fill();
+  text('自我', 0, -86, { size: 24, weight: 900, family: SERIF, color: C.glow });
+  rr(-72, -64, 92, 110, 10); ctx.fillStyle = '#F5D9B0'; ctx.fill();
+  for (let i = 0; i < 3; i++) { rr(32, -60 + i * 34, 40, 24, 6); ctx.fillStyle = i === 1 ? C.glow : '#7A4E3A'; ctx.fill(); }
+  rr(-60, 62, 120, 50, 10); ctx.fillStyle = '#120B08'; ctx.fill();
+  ctx.beginPath(); ctx.moveTo(-14, 72); ctx.lineTo(-11, 104); ctx.lineTo(11, 104); ctx.lineTo(14, 72); ctx.closePath();
+  ctx.fillStyle = C.cream; ctx.fill();
+  ctx.restore();
+}
+function sceneEnd(t) {
+  bgCream();
+  const p = eback(prog(t, 28.0, 28.6));
+  if (p > 0) miniMachine(540, 690, 1.5 * p);
+  riseText('자아판기', 540, 1080, t, 28.3, { size: 150, weight: 900, color: C.brown });
+  riseText('CAFE  JAAPANGI', 540, 1160, t, 28.5, { size: 34, weight: 700, color: C.caramel, spacing: 10 });
+  riseText('오늘의 나를 꺼내 마시는 곳', 540, 1300, t, 28.7, { size: 56, weight: 700, color: '#6B4A38' });
+}
+
+// ============================================================
+//  타임라인 합성
+// ============================================================
+function withAlpha(a, fn) { if (a <= 0) return; ctx.save(); ctx.globalAlpha = a; fn(); ctx.restore(); }
+function wipeUp(p, fn) {
+  if (p <= 0) return;
+  ctx.save(); const h = H * eio(p); ctx.beginPath(); ctx.rect(0, H - h, W, h); ctx.clip(); fn(); ctx.restore();
+}
+function renderFrame(t) {
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.globalAlpha = 1;
+  ctx.clearRect(0, 0, W, H);
+  if (t < 12.7) sceneMachine(t);
+  if (t >= 12.2 && t < 14.8) withAlpha(prog(t, 12.2, 12.6), () => sceneArt(t));
+  if (t >= 14.2 && t < 19.6) wipeUp(prog(t, 14.2, 14.7), () => sceneSignature(t));
+  if (t >= 19.0 && t < 24.6) wipeUp(prog(t, 19.0, 19.5), () => sceneSelves(t));
+  if (t >= 24.0 && t < 28.4) withAlpha(prog(t, 24.0, 24.4), () => sceneName(t));
+  if (t >= 27.8) withAlpha(prog(t, 27.8, 28.2), () => sceneEnd(t));
+  grain(t);
+  // 시작/끝 페이드
+  const fade = Math.max(1 - prog(t, 0, .3), 0);
+  if (fade > 0) { ctx.fillStyle = `rgba(0,0,0,${fade})`; ctx.fillRect(0, 0, W, H); }
+}
+window.renderFrame = renderFrame;
+window.DURATION = DURATION;
+
+// 폰트 로드 후 준비 완료
+const ALL_TEXT = document.documentElement.innerHTML.match(/'[^']*'/g).join('') + 'SIGNATUREJAPNGCF₩+·,?';
+window.ready = (async () => {
+  const loads = [];
+  for (const w of [400, 500, 700, 900]) loads.push(document.fonts.load(`${w} 40px "Noto Sans KR"`, ALL_TEXT));
+  for (const w of [600, 900]) loads.push(document.fonts.load(`${w} 40px "Noto Serif KR"`, '自我販機'));
+  await Promise.all(loads).catch(() => {});
+  await document.fonts.ready;
+  return true;
+})();
+
+// 미리보기 재생 (렌더 모드가 아닐 때)
+if (!location.search.includes('render')) {
+  window.ready.then(() => {
+    const t0 = performance.now();
+    const loop = now => { renderFrame(((now - t0) / 1000) % DURATION); requestAnimationFrame(loop); };
+    requestAnimationFrame(loop);
+  });
+} else {
+  document.body.classList.add('render');
+}
+</script>
+</body>
+</html>
